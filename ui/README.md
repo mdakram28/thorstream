@@ -72,4 +72,4 @@ npm run preview
 
 - API base is editable in the UI and persisted in local storage.
 - For production deployments, serve `ui/dist` behind a reverse proxy that routes API requests to Thorstream compatibility API.
-- Related docs: [../docs/README.md](../docs/README.md), [../README.md](../README.md)
+- Related docs: [../documentation/README.md](../documentation/README.md), [../README.md](../README.md)

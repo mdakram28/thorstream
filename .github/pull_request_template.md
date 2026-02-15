@@ -9,6 +9,6 @@
 - [ ] `cargo test --all-targets --all-features`
 
 ## Checklist
-- [ ] Docs updated (`README.md` / `docs/*`)
+- [ ] Docs updated (`README.md` / `documentation/*`)
 - [ ] `CHANGELOG.md` updated
 - [ ] Backward compatibility considered

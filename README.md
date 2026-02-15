@@ -167,14 +167,14 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 
 ## Documentation
 
-- Documentation home: [docs/index.md](docs/index.md)
-- Documentation index map: [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
-- Deployment (TLS + reverse proxy): [docs/DEPLOYMENT_TLS.md](docs/DEPLOYMENT_TLS.md)
-- Kubernetes-first deployment: [docs/KUBERNETES.md](docs/KUBERNETES.md)
-- Security (SASL/ACL/RBAC/audit): [docs/SECURITY_ENTERPRISE.md](docs/SECURITY_ENTERPRISE.md)
-- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- Documentation home: [documentation/index.md](documentation/index.md)
+- Documentation index map: [documentation/DOCS_INDEX.md](documentation/DOCS_INDEX.md)
+- Architecture: [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)
+- Operations: [documentation/OPERATIONS.md](documentation/OPERATIONS.md)
+- Deployment (TLS + reverse proxy): [documentation/DEPLOYMENT_TLS.md](documentation/DEPLOYMENT_TLS.md)
+- Kubernetes-first deployment: [documentation/KUBERNETES.md](documentation/KUBERNETES.md)
+- Security (SASL/ACL/RBAC/audit): [documentation/SECURITY_ENTERPRISE.md](documentation/SECURITY_ENTERPRISE.md)
+- Release checklist: [documentation/RELEASE_CHECKLIST.md](documentation/RELEASE_CHECKLIST.md)
 - UI guide: [ui/README.md](ui/README.md)
 
 ### MkDocs Material site
@@ -184,7 +184,7 @@ A full documentation website is included via MkDocs Material.
 Run locally:
 
 ```bash
-/home/akram/workspace/thorstream/.venv/bin/python -m pip install -r docs/requirements-mkdocs.txt
+/home/akram/workspace/thorstream/.venv/bin/python -m pip install -r documentation/requirements-mkdocs.txt
 /home/akram/workspace/thorstream/.venv/bin/python -m mkdocs serve
 ```
 
@@ -194,7 +194,7 @@ Build static site:
 /home/akram/workspace/thorstream/.venv/bin/python -m mkdocs build
 ```
 
-Configuration is in [mkdocs.yml](mkdocs.yml) and source pages are in [docs/index.md](docs/index.md).
+Configuration is in [mkdocs.yml](mkdocs.yml) and source pages are in [documentation/index.md](documentation/index.md).
 
 ## Observability & Ops
 

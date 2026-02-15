@@ -1,8 +1,10 @@
 site_name: Thorstream Docs
 site_description: Thorstream streaming platform documentation
-site_url: https://example.com/thorstream
+site_url: https://github.com/mdakram28/thorstream
 repo_name: thorstream
-repo_url: https://example.com/thorstream
+repo_url: https://github.com/mdakram28/thorstream
+docs_dir: documentation
+site_dir: docs
 
 theme:
   name: material
