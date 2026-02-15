@@ -42,10 +42,7 @@ impl PartitionLog {
         config: PartitionLogConfig,
     ) -> Result<Self> {
         let topic = topic.into();
-        let segment_dir = config
-            .data_dir
-            .join(&topic)
-            .join(partition.to_string());
+        let segment_dir = config.data_dir.join(&topic).join(partition.to_string());
         let segment_path = segment_dir.join("00000000000000000000.log");
         let segment = Segment::open(segment_path, 0)?;
         let segment = Arc::new(segment);

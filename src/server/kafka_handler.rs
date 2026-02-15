@@ -55,11 +55,16 @@ async fn handle_kafka_connection(broker: Arc<Broker>, mut stream: TcpStream) -> 
         while let Some((api_key, version, correlation_id, body)) =
             decode_kafka_request(&mut read_buf)?
         {
-            eprintln!("[thorstream] request api_key={} version={} corr={}", api_key, version, correlation_id);
             info!(api_key, version, correlation_id, "kafka request");
             let body_in = body.into_inner();
             let body_cursor = Cursor::new(body_in);
-            let resp = match handle_kafka_request(&broker, api_key, version, correlation_id, body_cursor) {
+            let resp = match handle_kafka_request(
+                &broker,
+                api_key,
+                version,
+                correlation_id,
+                body_cursor,
+            ) {
                 Ok(r) => r,
                 Err(e) => {
                     error!("kafka request error: {}", e);

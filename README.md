@@ -1,97 +1,102 @@
 # Thorstream
 
-A fast, Kafka-like append-only event streaming platform in Rust with **Kafka consumer–compatible semantics**: topics, partitions, offsets, consumer groups, commit/seek, and poll-based consumption.
+Thorstream is a Rust event streaming broker with Kafka-like APIs, append-only durable storage, and a lightweight multi-node replication/control plane.
 
-## Features
+## Highlights
 
-- **Append-only log storage** — Segment files with length-prefixed records; designed for fast sequential writes and reads.
-- **Kafka-style model** — Topics, partitions, offsets, high water mark, and consumer group offset commit/fetch.
-- **Producer API** — Send single or batch records; optional key and partition.
-- **Consumer API** — Subscribe or assign topic/partitions, poll, seek, and commit offsets (same concepts as Kafka).
-- **Wire protocol** — Length-prefixed binary protocol (Metadata, Produce, Fetch, OffsetCommit, OffsetFetch) for a remote server.
-- **Extensible layout** — Storage, broker, protocol, and server are split into modules for easier evolution (e.g. segment rollover, replication).
+- Append-only segmented storage with startup recovery from disk.
+- Topics, partitions, offsets, consumer groups, commit/seek/poll semantics.
+- TCP custom protocol server and Kafka wire protocol endpoint.
+- Leader-aware produce path with peer replication and quorum acknowledgement.
+- Deterministic heartbeat-based leader election for static cluster membership.
 
 ## Quick start
 
-**Run the server** (default: `0.0.0.0:9092`):
+Run a single node:
 
 ```bash
 cargo run --bin thorstream
-# or
-THORSTREAM_ADDR=0.0.0.0:9093 cargo run --bin thorstream
 ```
 
-**Use in-process (embedded)**:
+Enable Kafka protocol listener:
 
-```rust
-use std::sync::Arc;
-use thorstream::{Broker, BrokerConfig, Producer, Consumer, Record};
-
-let config = BrokerConfig::default();
-let broker = Arc::new(Broker::new(config)?);
-broker.create_topic("events", None)?;
-
-let producer = Producer::new(Arc::clone(&broker));
-producer.send("events", Record::new(b"hello".to_vec()), None)?;
-
-let mut consumer = Consumer::new(Arc::clone(&broker));
-consumer.set_group_id("my-group");
-consumer.subscribe(vec!["events".to_string()])?;
-let records = consumer.poll(None)?;
-consumer.commit()?;
+```bash
+THORSTREAM_KAFKA_ADDR=0.0.0.0:9093 cargo run --bin thorstream
 ```
 
-## Project layout
+## 3-node local cluster
 
-```
-src/
-├── lib.rs           # Re-exports and public API
-├── error.rs          # Error type
-├── types.rs          # Record, StoredRecord (Kafka-like)
-├── storage/          # Append-only log
-│   ├── segment.rs   # Single segment file (length-prefixed, bincode)
-│   └── log.rs        # Partition log (per-topic/partition)
-├── broker/           # Topic/partition management
-│   └── topic.rs      # Broker, create_topic, produce, fetch, offset commit/fetch
-├── protocol/         # Wire format
-│   └── codec.rs      # Request/response encode/decode
-├── producer.rs       # Producer client
-├── consumer.rs       # Kafka-compatible consumer (assign, subscribe, poll, commit, seek)
-└── server/           # TCP server
-    └── handler.rs    # Connection handler, dispatch to broker
+Node 0:
+
+```bash
+THORSTREAM_NODE_ID=0 \
+THORSTREAM_ADDR=127.0.0.1:9100 \
+THORSTREAM_CLUSTER_PEERS="1=127.0.0.1:9101,2=127.0.0.1:9102" \
+cargo run --bin thorstream
 ```
 
-## Consumer compatibility
+Node 1:
 
-The consumer API mirrors Kafka’s:
+```bash
+THORSTREAM_NODE_ID=1 \
+THORSTREAM_ADDR=127.0.0.1:9101 \
+THORSTREAM_CLUSTER_PEERS="0=127.0.0.1:9100,2=127.0.0.1:9102" \
+cargo run --bin thorstream
+```
 
-- **Subscribe** — Subscribe to topic(s); all partitions are assigned.
-- **Assign** — Manually assign topic/partition(s).
-- **Poll** — Fetch records for assigned partitions; offsets advance automatically.
-- **Commit** — Commit current offsets for the consumer group (requires `set_group_id`).
-- **Seek** — Set position for a topic/partition.
-- **Position** — Current offset for a topic/partition.
+Node 2:
 
-Committed offsets are stored per (group_id, topic, partition) and used on the next subscribe/assign so each consumer in a group resumes from the last committed position.
+```bash
+THORSTREAM_NODE_ID=2 \
+THORSTREAM_ADDR=127.0.0.1:9102 \
+THORSTREAM_CLUSTER_PEERS="0=127.0.0.1:9100,1=127.0.0.1:9101" \
+cargo run --bin thorstream
+```
 
-## Configuration
+## Environment variables
 
-- **BrokerConfig** — `data_dir`, `default_topic_config` (e.g. `num_partitions`).
-- **TopicConfig** — `num_partitions`, `replication_factor` (replication not implemented; for API compatibility).
-- **PartitionLogConfig** — `max_segment_size_bytes` (for future segment rollover), `data_dir`.
+- `THORSTREAM_ADDR`: custom protocol listener (default `0.0.0.0:9092`)
+- `THORSTREAM_KAFKA_ADDR`: Kafka protocol listener (optional)
+- `THORSTREAM_NODE_ID`: integer node id for cluster mode
+- `THORSTREAM_CLUSTER_PEERS`: static peers, format `id=host:port,id=host:port`
 
-## Testing with standard Kafka client libraries
+## Development
 
-Thorstream speaks the Kafka wire protocol so **standard Kafka clients** (e.g. kafka-python) can connect. Tests are in Python (pytest) and **start the Thorstream Kafka broker automatically** for the session.
+Run checks:
 
-1. **Build the binary** (so the test can start it): `cargo build --bin thorstream`
-2. **Set up a venv and run tests** (from repo root):
-   ```bash
-   ./tests/kafka_client_compat/setup_venv.sh
-   pytest tests/kafka_client_compat/test_thorstream.py -v
-   ```
-   The tests start the broker on `127.0.0.1:19093`, run, then stop it. No need to run the server manually.
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+```
+
+Run benchmarks:
+
+```bash
+cargo bench --bench throughput
+```
+
+Kafka compatibility tests (Python):
+
+```bash
+./tests/kafka_client_compat/setup_venv.sh
+pytest tests/kafka_client_compat/test_thorstream.py -v
+```
+
+## Documentation
+
+- Architecture: `docs/ARCHITECTURE.md`
+- Operations: `docs/OPERATIONS.md`
+- Release checklist: `docs/RELEASE_CHECKLIST.md`
+- Security policy: `SECURITY.md`
+- Contribution guide: `CONTRIBUTING.md`
+
+## Current limitations
+
+- Leader election is heartbeat-based and deterministic, not full Raft log consensus.
+- Cluster membership is static at startup.
+- Snapshot shipping and log compaction are not implemented.
 
 ## License
 
-MIT
+MIT License. See `LICENSE`.

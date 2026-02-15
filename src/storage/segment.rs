@@ -83,8 +83,10 @@ impl Segment {
         file.write_all(&bytes)?;
         file.flush()?;
         let offset = self.next_offset.fetch_add(1, Ordering::SeqCst);
-        self.write_position
-            .fetch_add(LENGTH_PREFIX_BYTES as i64 + bytes.len() as i64, Ordering::SeqCst);
+        self.write_position.fetch_add(
+            LENGTH_PREFIX_BYTES as i64 + bytes.len() as i64,
+            Ordering::SeqCst,
+        );
         Ok(offset)
     }
 

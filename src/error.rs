@@ -31,4 +31,13 @@ pub enum ThorstreamError {
 
     #[error("Consumer group error: {0}")]
     ConsumerGroup(String),
+
+    #[error("Not leader. Leader id: {leader_id:?}, leader addr: {leader_addr:?}")]
+    NotLeader {
+        leader_id: Option<i32>,
+        leader_addr: Option<String>,
+    },
+
+    #[error("Cluster error: {0}")]
+    Cluster(String),
 }

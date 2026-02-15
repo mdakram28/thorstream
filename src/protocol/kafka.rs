@@ -5,6 +5,7 @@
 //! Supports: ApiVersions (18), Metadata (3), Produce (0), Fetch (1).
 
 use crate::broker::Broker;
+use crate::cluster;
 use crate::error::{Result, ThorstreamError};
 use crate::types::Record;
 use bytes::{Buf, BufMut, BytesMut};
@@ -12,16 +13,14 @@ use std::io::Cursor;
 
 const API_PRODUCE: i16 = 0;
 const API_FETCH: i16 = 1;
+const API_LIST_OFFSETS: i16 = 2;
 const API_METADATA: i16 = 3;
-const API_OFFSET_COMMIT: i16 = 8;
-const API_OFFSET_FETCH: i16 = 9;
-const API_FIND_COORDINATOR: i16 = 10;
-const API_JOIN_GROUP: i16 = 11;
-const API_HEARTBEAT: i16 = 12;
-const API_SYNC_GROUP: i16 = 14;
 const API_API_VERSIONS: i16 = 18;
 
 const RECORD_BATCH_MAGIC: i8 = 2;
+
+type DecodedKafkaRequest = (i16, i16, i32, Cursor<Vec<u8>>);
+type FetchResponseData = (String, i32, Vec<(i64, Record)>, i64);
 
 /// Read Kafka request header (after frame length): api_key, api_version, correlation_id, client_id.
 fn read_request_header(src: &mut Cursor<Vec<u8>>) -> Result<(i16, i16, i32, Option<String>)> {
@@ -85,7 +84,10 @@ fn parse_record_batch(mut payload: &[u8]) -> Result<(i64, Vec<Record>)> {
     let _partition_leader_epoch = payload.get_i32();
     let magic = payload.get_i8();
     if magic != RECORD_BATCH_MAGIC {
-        return Err(ThorstreamError::Protocol(format!("unsupported batch magic {}", magic)));
+        return Err(ThorstreamError::Protocol(format!(
+            "unsupported batch magic {}",
+            magic
+        )));
     }
     let _crc = payload.get_u32();
     let _attributes = payload.get_i16();
@@ -255,8 +257,15 @@ fn put_unsigned_varint(dst: &mut BytesMut, mut u: u32) {
     dst.put_u8(u as u8);
 }
 
+/// Write compact string (varint length+1, then utf8 bytes). Null is 0.
+fn put_compact_string(dst: &mut BytesMut, s: &str) {
+    let bytes = s.as_bytes();
+    put_unsigned_varint(dst, (bytes.len() + 1) as u32);
+    dst.extend_from_slice(bytes);
+}
+
 /// Decode one Kafka request from buffer. Returns (api_key, api_version, correlation_id, body_cursor) or None if incomplete.
-pub fn decode_kafka_request(src: &mut BytesMut) -> Result<Option<(i16, i16, i32, Cursor<Vec<u8>>)>> {
+pub fn decode_kafka_request(src: &mut BytesMut) -> Result<Option<DecodedKafkaRequest>> {
     if src.len() < 4 {
         return Ok(None);
     }
@@ -277,22 +286,23 @@ pub fn decode_kafka_request(src: &mut BytesMut) -> Result<Option<(i16, i16, i32,
 }
 
 /// Handle Kafka request and write response into dst.
-pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correlation_id: i32, mut body: Cursor<Vec<u8>>) -> Result<BytesMut> {
+pub fn handle_kafka_request(
+    broker: &Broker,
+    api_key: i16,
+    version: i16,
+    correlation_id: i32,
+    mut body: Cursor<Vec<u8>>,
+) -> Result<BytesMut> {
     let mut dst = BytesMut::new();
     match api_key {
         API_API_VERSIONS => {
             write_response_header(&mut dst, correlation_id);
             dst.put_i16(0); // error_code
             let apis: &[(i16, i16, i16)] = &[
-                (API_PRODUCE, 0, 9),
-                (API_FETCH, 0, 13),
-                (API_METADATA, 0, 12),
-                (API_OFFSET_COMMIT, 0, 8),
-                (API_OFFSET_FETCH, 0, 8),
-                (API_FIND_COORDINATOR, 0, 4),
-                (API_JOIN_GROUP, 0, 9),
-                (API_HEARTBEAT, 0, 5),
-                (API_SYNC_GROUP, 0, 5),
+                (API_PRODUCE, 0, 5),
+                (API_FETCH, 0, 5),
+                (API_LIST_OFFSETS, 0, 2),
+                (API_METADATA, 0, 8),
                 (API_API_VERSIONS, 0, 3),
             ];
             if version >= 3 {
@@ -320,44 +330,160 @@ pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correla
             }
         }
         API_METADATA => {
-            let _topics = read_metadata_request(&mut body)?;
-            let topics: Vec<String> = broker.list_topics();
+            let requested_topics = read_metadata_request(&mut body, version)?;
+            // If no topics requested (or null), return all topics
+            let topics: Vec<String> = if requested_topics.is_empty() {
+                broker.list_topics()
+            } else {
+                // Auto-create requested topics that don't exist (Kafka default behavior)
+                for topic in &requested_topics {
+                    let _ = broker.ensure_topic(topic);
+                }
+                requested_topics
+            };
             write_response_header(&mut dst, correlation_id);
+
+            // Version 9+ uses compact format
+            let compact = version >= 9;
+
+            if version >= 3 {
+                // v3+: throttle_time_ms at start
+                dst.put_i32(0);
+            }
+
             let port: i32 = std::env::var("THORSTREAM_KAFKA_PORT")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(9093);
-            dst.put_i32(1); // broker count
+
+            // Brokers array
+            if compact {
+                put_unsigned_varint(&mut dst, 2); // compact array: count+1
+            } else {
+                dst.put_i32(1); // broker count
+            }
             dst.put_i32(0); // node_id
-            write_string(&mut dst, "127.0.0.1");
+            if compact {
+                put_compact_string(&mut dst, "127.0.0.1");
+            } else {
+                write_string(&mut dst, "127.0.0.1");
+            }
             dst.put_i32(port);
-            // Topics: v0 = array of (error_code, topic, partitions)
-            dst.put_i32(topics.len() as i32);
+            if version >= 1 {
+                // v1+: rack (nullable string)
+                if compact {
+                    put_unsigned_varint(&mut dst, 0); // null = length 0
+                } else {
+                    dst.put_i16(-1); // null rack
+                }
+            }
+            if compact {
+                put_unsigned_varint(&mut dst, 0); // tagged fields
+            }
+
+            if version >= 2 {
+                // v2+: cluster_id (nullable string)
+                if compact {
+                    put_unsigned_varint(&mut dst, 0); // null = length 0
+                } else {
+                    dst.put_i16(-1); // null cluster_id
+                }
+            }
+            if version >= 1 {
+                // v1+: controller_id
+                dst.put_i32(0);
+            }
+
+            // Topics array
+            if compact {
+                put_unsigned_varint(&mut dst, (topics.len() + 1) as u32);
+            } else {
+                dst.put_i32(topics.len() as i32);
+            }
+
             for name in topics {
                 let n = broker.num_partitions(&name).unwrap_or(0);
                 dst.put_i16(0); // error_code
-                write_string(&mut dst, &name);
-                dst.put_i32(n); // partition count
+                if compact {
+                    put_compact_string(&mut dst, &name);
+                } else {
+                    write_string(&mut dst, &name);
+                }
+                if version >= 1 {
+                    // v1+: is_internal
+                    dst.put_i8(0);
+                }
+
+                // Partitions array
+                if compact {
+                    put_unsigned_varint(&mut dst, (n + 1) as u32);
+                } else {
+                    dst.put_i32(n); // partition count
+                }
+
                 for p in 0..n {
                     dst.put_i16(0); // error_code
                     dst.put_i32(p); // partition
                     dst.put_i32(0); // leader
-                    dst.put_i32(1); // replicas count
+                    if version >= 7 {
+                        // v7+: leader_epoch
+                        dst.put_i32(-1);
+                    }
+                    // Replicas array
+                    if compact {
+                        put_unsigned_varint(&mut dst, 2); // count+1
+                    } else {
+                        dst.put_i32(1); // replicas count
+                    }
                     dst.put_i32(0); // replica
-                    dst.put_i32(1); // isr count
+
+                    // ISR array
+                    if compact {
+                        put_unsigned_varint(&mut dst, 2); // count+1
+                    } else {
+                        dst.put_i32(1); // isr count
+                    }
                     dst.put_i32(0); // isr
+
+                    if version >= 5 {
+                        // v5+: offline_replicas
+                        if compact {
+                            put_unsigned_varint(&mut dst, 1); // empty array
+                        } else {
+                            dst.put_i32(0); // offline_replicas count
+                        }
+                    }
+                    if compact {
+                        put_unsigned_varint(&mut dst, 0); // tagged fields
+                    }
                 }
+
+                if version >= 8 {
+                    // v8+: topic_authorized_operations
+                    dst.put_i32(-2147483648); // no ops specified
+                }
+                if compact {
+                    put_unsigned_varint(&mut dst, 0); // tagged fields
+                }
+            }
+            if version >= 8 {
+                // v8+: cluster_authorized_operations
+                dst.put_i32(-2147483648); // no ops specified
+            }
+            if compact {
+                put_unsigned_varint(&mut dst, 0); // tagged fields at end
             }
         }
         API_PRODUCE => {
-            let (topic, partition, base_offset, ok) = read_produce_request_and_apply(broker, &mut body, version)?;
+            let (topic, partition, base_offset, ok) =
+                read_produce_request_and_apply(broker, &mut body, version)?;
             write_response_header(&mut dst, correlation_id);
             // Response: topics array, then throttle_time_ms (v1+). No log_start_offset before v5.
             dst.put_i32(1); // topics count
             write_string(&mut dst, &topic);
             dst.put_i32(1); // partitions count
             dst.put_i32(partition);
-            dst.put_i16(if ok { 0 } else { 1 }); // error_code: 0=OK, 1=UNKNOWN_SERVER_ERROR
+            dst.put_i16(if ok { 0 } else { -1 }); // error_code: 0=OK, -1=UNKNOWN_SERVER_ERROR
             dst.put_i64(base_offset); // offset
             if version >= 2 {
                 dst.put_i64(-1); // timestamp (v2+)
@@ -370,7 +496,8 @@ pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correla
             }
         }
         API_FETCH => {
-            let (topic, partition, records, high_water_mark) = read_fetch_request_and_apply(broker, &mut body)?;
+            let (topic, partition, records, high_water_mark) =
+                read_fetch_request_and_apply(broker, &mut body, version)?;
             write_response_header(&mut dst, correlation_id);
             if version >= 1 {
                 dst.put_i32(0); // throttle_time_ms (v1+)
@@ -381,6 +508,15 @@ pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correla
             dst.put_i32(partition);
             dst.put_i16(0); // error_code
             dst.put_i64(high_water_mark);
+            if version >= 4 {
+                dst.put_i64(-1); // last_stable_offset (v4+)
+            }
+            if version >= 5 {
+                dst.put_i64(0); // log_start_offset (v5+)
+            }
+            if version >= 4 {
+                dst.put_i32(0); // aborted_transactions count (v4+)
+            }
             let batch = if records.is_empty() {
                 Vec::new()
             } else {
@@ -391,6 +527,46 @@ pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correla
             dst.put_i32(batch.len() as i32);
             dst.extend_from_slice(&batch);
         }
+        API_LIST_OFFSETS => {
+            // ListOffsets: used by consumers to find earliest/latest offsets
+            let _replica_id = body.get_i32();
+            let topic_count = body.get_i32();
+            // For simplicity, handle first topic/partition only
+            let mut topic_name = String::new();
+            let mut partition_id = 0i32;
+            let mut timestamp = 0i64;
+            if topic_count > 0 {
+                topic_name = read_string(&mut body)?.unwrap_or_default();
+                let partition_count = body.get_i32();
+                if partition_count > 0 {
+                    partition_id = body.get_i32();
+                    timestamp = body.get_i64();
+                }
+            }
+            // Determine offset: -2=earliest(0), -1=latest(hwm), else 0
+            let offset = if timestamp == -2 {
+                broker.start_offset(&topic_name, partition_id).unwrap_or(0)
+            } else if timestamp == -1 {
+                broker
+                    .high_water_mark(&topic_name, partition_id)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            write_response_header(&mut dst, correlation_id);
+            if version >= 2 {
+                dst.put_i32(0); // throttle_time_ms (v2+)
+            }
+            dst.put_i32(1); // topic count
+            write_string(&mut dst, &topic_name);
+            dst.put_i32(1); // partition count
+            dst.put_i32(partition_id);
+            dst.put_i16(0); // error_code
+            if version >= 1 {
+                dst.put_i64(timestamp); // timestamp (v1+)
+            }
+            dst.put_i64(offset); // offset
+        }
         _ => {
             write_response_header(&mut dst, correlation_id);
             dst.put_i16(0);
@@ -399,9 +575,13 @@ pub fn handle_kafka_request(broker: &Broker, api_key: i16, version: i16, correla
     Ok(dst)
 }
 
-fn read_metadata_request(body: &mut Cursor<Vec<u8>>) -> Result<Vec<String>> {
+fn read_metadata_request(body: &mut Cursor<Vec<u8>>, _version: i16) -> Result<Vec<String>> {
     let n = body.get_i32();
-    let mut topics = Vec::with_capacity(n.max(0) as usize);
+    // Negative count or very large count means null (request all topics)
+    if n < 0 {
+        return Ok(Vec::new());
+    }
+    let mut topics = Vec::with_capacity(n.clamp(0, 1000) as usize);
     for _ in 0..n {
         if let Some(s) = read_string(body)? {
             topics.push(s);
@@ -410,7 +590,17 @@ fn read_metadata_request(body: &mut Cursor<Vec<u8>>) -> Result<Vec<String>> {
     Ok(topics)
 }
 
-fn read_produce_request_and_apply(broker: &Broker, body: &mut Cursor<Vec<u8>>, version: i16) -> Result<(String, i32, i64, bool)> {
+fn read_produce_request_and_apply(
+    broker: &Broker,
+    body: &mut Cursor<Vec<u8>>,
+    version: i16,
+) -> Result<(String, i32, i64, bool)> {
+    if !broker.is_leader() {
+        return Err(ThorstreamError::NotLeader {
+            leader_id: broker.leader_id(),
+            leader_addr: broker.leader_addr(),
+        });
+    }
     if version >= 3 {
         let _ = read_string(body)?; // transactional_id (nullable)
     }
@@ -438,10 +628,18 @@ fn read_produce_request_and_apply(broker: &Broker, body: &mut Cursor<Vec<u8>>, v
             match parse_record_batch(&buf) {
                 Ok((_, records)) => {
                     for (i, rec) in records.into_iter().enumerate() {
-                        if let Ok((_, offset)) = broker.produce(&topic, Some(partition), rec) {
-                            if i == 0 {
-                                last_offset = offset;
+                        match broker.produce(&topic, Some(partition), rec.clone()) {
+                            Ok((p, offset)) => {
+                                if cluster::replicate_to_quorum(broker, &topic, p, offset, &rec)
+                                    .is_err()
+                                {
+                                    ok = false;
+                                }
+                                if i == 0 {
+                                    last_offset = offset;
+                                }
                             }
+                            Err(_) => ok = false,
                         }
                     }
                 }
@@ -452,11 +650,24 @@ fn read_produce_request_and_apply(broker: &Broker, body: &mut Cursor<Vec<u8>>, v
     Ok((last_topic, last_partition, last_offset, ok))
 }
 
-fn read_fetch_request_and_apply(broker: &Broker, body: &mut Cursor<Vec<u8>>) -> Result<(String, i32, Vec<(i64, Record)>, i64)> {
+fn read_fetch_request_and_apply(
+    broker: &Broker,
+    body: &mut Cursor<Vec<u8>>,
+    version: i16,
+) -> Result<FetchResponseData> {
     let _replica_id = body.get_i32();
     let _max_wait = body.get_i32();
     let _min_bytes = body.get_i32();
-    let max_bytes = body.get_i32().max(0) as usize;
+    if version >= 3 {
+        let _max_bytes = body.get_i32(); // v3+
+    }
+    if version >= 4 {
+        let _isolation_level = body.get_i8(); // v4+
+    }
+    if version >= 7 {
+        let _session_id = body.get_i32(); // v7+
+        let _session_epoch = body.get_i32();
+    }
     let topic_count = body.get_i32();
     if topic_count <= 0 {
         return Err(ThorstreamError::Protocol("fetch: no topics".into()));
@@ -468,9 +679,15 @@ fn read_fetch_request_and_apply(broker: &Broker, body: &mut Cursor<Vec<u8>>) -> 
     }
     let partition = body.get_i32();
     let fetch_offset = body.get_i64();
-    let _log_start_offset = body.get_i64();
+    if version >= 5 {
+        let _log_start_offset = body.get_i64(); // v5+
+    }
     let partition_max_bytes = body.get_i32().max(0) as usize;
-    let max_bytes = partition_max_bytes.min(max_bytes).max(1);
+    let max_bytes = partition_max_bytes.max(1);
+    if version >= 7 {
+        // v7+: forgotten topics
+        let _forgotten_topics_count = body.get_i32();
+    }
     let stored = broker.fetch(&topic, partition, fetch_offset, max_bytes, 500)?;
     let high = broker.high_water_mark(&topic, partition)?;
     let pairs: Vec<(i64, Record)> = stored.into_iter().map(|s| (s.offset, s.record)).collect();

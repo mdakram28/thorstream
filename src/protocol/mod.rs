@@ -7,8 +7,8 @@ mod codec;
 mod kafka;
 
 pub use codec::{
-    decode_request, encode_response, FetchResponse, MetadataResponse, PartitionMetadata,
-    ProduceResponse, Request, Response, TopicMetadata,
+    decode_request, encode_request, encode_response, FetchResponse, MetadataResponse,
+    PartitionMetadata, ProduceResponse, Request, Response, TopicMetadata,
 };
 pub use kafka::{
     build_minimal_error_response, decode_kafka_request, handle_kafka_request, kafka_frame_response,

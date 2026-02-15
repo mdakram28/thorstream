@@ -4,8 +4,23 @@
 //! Kafka wire protocol server for standard Kafka client compatibility.
 
 use std::sync::Arc;
-use thorstream::{Broker, BrokerConfig, server};
+use thorstream::{cluster, server, Broker, BrokerConfig};
 use tracing_subscriber::EnvFilter;
+
+fn parse_peers() -> std::collections::HashMap<i32, String> {
+    let mut peers = std::collections::HashMap::new();
+    if let Ok(raw) = std::env::var("THORSTREAM_CLUSTER_PEERS") {
+        for item in raw.split(',').filter(|s| !s.trim().is_empty()) {
+            let mut parts = item.splitn(2, '=');
+            let id = parts.next().and_then(|s| s.parse::<i32>().ok());
+            let addr = parts.next().map(|s| s.to_string());
+            if let (Some(id), Some(addr)) = (id, addr) {
+                peers.insert(id, addr);
+            }
+        }
+    }
+    peers
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -13,8 +28,22 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env().add_directive("thorstream=info".parse()?))
         .init();
 
-    let config = BrokerConfig::default();
+    let config = BrokerConfig {
+        node_id: std::env::var("THORSTREAM_NODE_ID")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0),
+        peers: parse_peers(),
+        ..BrokerConfig::default()
+    };
     let broker = Arc::new(Broker::new(config)?);
+
+    if !broker.cluster_status().peers.is_empty() {
+        let cp_broker = Arc::clone(&broker);
+        tokio::spawn(async move {
+            cluster::run_control_plane(cp_broker).await;
+        });
+    }
 
     let main_addr = std::env::var("THORSTREAM_ADDR").unwrap_or_else(|_| "0.0.0.0:9092".to_string());
     let main_broker = Arc::clone(&broker);

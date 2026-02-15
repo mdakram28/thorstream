@@ -1,6 +1,7 @@
 //! Thorstream: fast Kafka-like append-only event streaming with Kafka consumer compatibility.
 
 pub mod broker;
+pub mod cluster;
 pub mod consumer;
 pub mod error;
 pub mod producer;

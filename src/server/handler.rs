@@ -1,6 +1,7 @@
 //! Handle client connections: decode requests, call broker, encode responses.
 
 use crate::broker::Broker;
+use crate::cluster;
 use crate::error::Result;
 use crate::protocol::{
     decode_request, encode_response, FetchResponse, MetadataResponse, PartitionMetadata,
@@ -17,6 +18,14 @@ const MAX_FRAME_LEN: usize = 100 * 1024 * 1024; // 100MB
 /// Run the TCP server loop (accept and spawn per-connection handler).
 pub async fn run_server(broker: Arc<Broker>, addr: &str) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    run_server_on_listener(broker, listener).await
+}
+
+pub async fn run_server_on_listener(
+    broker: Arc<Broker>,
+    listener: tokio::net::TcpListener,
+) -> Result<()> {
+    let addr = listener.local_addr()?;
     tracing::info!("Thorstream server listening on {}", addr);
     loop {
         let (stream, peer) = match listener.accept().await {
@@ -71,8 +80,32 @@ async fn dispatch(broker: &Broker, req: Request) -> Response {
             records,
         } => match handle_produce(broker, topic, partition, records) {
             Ok(r) => Response::Produce(r),
+            Err(crate::error::ThorstreamError::NotLeader {
+                leader_id,
+                leader_addr,
+            }) => Response::NotLeader {
+                leader_id,
+                leader_addr,
+            },
             Err(e) => Response::Error(e.to_string()),
         },
+        Request::InternalReplicate {
+            topic,
+            partition,
+            expected_offset,
+            record,
+        } => match broker.apply_replication(&topic, partition, record, expected_offset) {
+            Ok(offset) => Response::InternalReplicateAck(offset),
+            Err(e) => Response::Error(e.to_string()),
+        },
+        Request::ControlPing { .. } => {
+            let s = broker.cluster_status();
+            Response::ControlPong {
+                node_id: s.node_id,
+                term: s.term,
+                leader_id: s.leader_id,
+            }
+        }
         Request::Fetch {
             topic,
             partition,
@@ -116,17 +149,15 @@ fn handle_metadata(broker: &Broker, topics: Vec<String>) -> Result<MetadataRespo
         .into_iter()
         .map(|name| {
             let n = broker.num_partitions(&name).unwrap_or(0);
+            let rf = broker.replication_factor(&name).unwrap_or(1).max(1) as i32;
             let partitions = (0..n)
                 .map(|p| PartitionMetadata {
                     partition_id: p,
                     leader_id: 0,
-                    replicas: vec![0],
+                    replicas: (0..rf).collect(),
                 })
                 .collect();
-            TopicMetadata {
-                name,
-                partitions,
-            }
+            TopicMetadata { name, partitions }
         })
         .collect();
     Ok(MetadataResponse {
@@ -140,10 +171,18 @@ fn handle_produce(
     partition: Option<i32>,
     records: Vec<crate::types::Record>,
 ) -> Result<ProduceResponse> {
+    if !broker.is_leader() {
+        return Err(crate::error::ThorstreamError::NotLeader {
+            leader_id: broker.leader_id(),
+            leader_addr: broker.leader_addr(),
+        });
+    }
+
     let mut base_offset = 0i64;
     let mut partition_id = 0i32;
     for record in records {
-        let (p, offset) = broker.produce(&topic, partition, record)?;
+        let (p, offset) = broker.produce(&topic, partition, record.clone())?;
+        cluster::replicate_to_quorum(broker, &topic, p, offset, &record)?;
         partition_id = p;
         base_offset = offset;
     }
