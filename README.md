@@ -1,3 +1,5 @@
+<p align="center"><img src="documentation/assets/logo.svg" width="250px"></p>
+
 # Thorstream
 
 Thorstream is a Rust event streaming broker with Kafka-like APIs, append-only durable storage, and a lightweight multi-node replication/control plane.
