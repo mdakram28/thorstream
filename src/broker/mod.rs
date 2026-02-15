@@ -2,4 +2,4 @@
 
 mod topic;
 
-pub use topic::{Broker, BrokerConfig, TopicConfig};
+pub use topic::{Broker, BrokerConfig, CleanupPolicy, TopicConfig};

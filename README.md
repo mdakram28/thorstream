@@ -60,6 +60,8 @@ cargo run --bin thorstream
 - `THORSTREAM_NODE_ID`: integer node id for cluster mode
 - `THORSTREAM_CLUSTER_PEERS`: static peers, format `id=host:port,id=host:port`
 - `THORSTREAM_COMPAT_API_ADDR`: enables HTTP compatibility APIs for Kafka Connect and Schema Registry
+- `THORSTREAM_OBJECT_STORE_DIR`: object-store-backed mirror root for segment durability
+- `THORSTREAM_OBJECT_STORE_REQUIRED`: fail writes if object-store mirror fails (`true/false`)
 - `THORSTREAM_SASL_PLAIN_USERS`: comma-separated `user:password` pairs
 - `THORSTREAM_SASL_SCRAM_USERS`: comma-separated `user:password` pairs for SCRAM validation
 - `THORSTREAM_SASL_OAUTH_TOKENS`: comma-separated bearer tokens
@@ -68,6 +70,7 @@ cargo run --bin thorstream
 - `THORSTREAM_ACL_DEFAULT_ALLOW`: `true/false` fallback if no ACL match
 - `THORSTREAM_RBAC_BINDINGS`: role bindings, e.g. `alice=admin;bob=viewer`
 - `THORSTREAM_AUDIT_LOG_PATH`: JSONL audit log file path
+- `THORSTREAM_LOG_FORMAT`: set `json` for structured JSON logs
 
 ## Development
 
@@ -124,12 +127,46 @@ Enable API server:
 THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 ```
 
+## Advanced log semantics
+
+- Partitioned log ordering guarantees per partition.
+- Retention policies:
+	- Time-based retention (`TopicConfig.retention_ms`)
+	- Size-based retention (`TopicConfig.retention_bytes`)
+	- Log compaction by key (`TopicConfig.cleanup_policy = Compact`)
+- Idempotent producer semantics:
+	- Producer ID + sequence number checks (`Producer::send_idempotent`)
+	- Duplicate sequence dedupe and gap rejection
+- Exactly-once scaffolding (EOS):
+	- Transaction begin/commit/abort (`Producer::begin_transaction`, `send_transactional`, `commit_transaction`, `abort_transaction`)
+	- Producer ID/sequence metadata persisted in records
+- High watermark / ISR semantics:
+	- Topic `min_insync_replicas` support
+	- Partition high watermark computed from ISR minimum
+	- Replica consistency checks on append path
+
 ## Documentation
 
 - Architecture: `docs/ARCHITECTURE.md`
 - Operations: `docs/OPERATIONS.md`
 - Deployment (TLS + reverse proxy): `docs/DEPLOYMENT_TLS.md`
+- Kubernetes-first deployment: `docs/KUBERNETES.md`
 - Security (SASL/ACL/RBAC/audit): `docs/SECURITY_ENTERPRISE.md`
+
+## Observability & Ops
+
+- Prometheus-compatible metrics endpoint: `GET /metrics` on the compatibility API listener.
+- Exposed metrics include:
+	- consumer lag per group/topic/partition
+	- partition size bytes
+	- throughput counters (produce/fetch records and bytes)
+	- under-replicated partitions
+	- request latency p99 (ms)
+- Structured logs:
+	- set `THORSTREAM_LOG_FORMAT=json`
+- OpenTelemetry hooks:
+	- request paths emit `tracing` spans (`thorstream.request`) for custom and Kafka transports
+	- these spans can be forwarded by an OTEL-enabled subscriber/collector pipeline
 - Release checklist: `docs/RELEASE_CHECKLIST.md`
 - Security policy: `SECURITY.md`
 - Contribution guide: `CONTRIBUTING.md`

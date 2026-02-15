@@ -8,6 +8,12 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CleanupPolicy {
+    Delete,
+    Compact,
+}
+
 /// Per-topic configuration (Kafka-compatible: partitions, replication, etc.).
 #[derive(Clone, Debug)]
 pub struct TopicConfig {
@@ -15,6 +21,14 @@ pub struct TopicConfig {
     pub num_partitions: i32,
     /// Replication factor (ignored in single-node; for API compatibility).
     pub replication_factor: i16,
+    /// Minimum in-sync replicas required for acked produce.
+    pub min_insync_replicas: i16,
+    /// Time retention (ms).
+    pub retention_ms: Option<u64>,
+    /// Size retention (bytes).
+    pub retention_bytes: Option<u64>,
+    /// Cleanup policy.
+    pub cleanup_policy: CleanupPolicy,
 }
 
 impl Default for TopicConfig {
@@ -22,8 +36,19 @@ impl Default for TopicConfig {
         Self {
             num_partitions: 1,
             replication_factor: 1,
+            min_insync_replicas: 1,
+            retention_ms: None,
+            retention_bytes: None,
+            cleanup_policy: CleanupPolicy::Delete,
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct TxnBufferRecord {
+    topic: String,
+    partition: Option<i32>,
+    record: Record,
 }
 
 /// Broker-wide configuration.
@@ -65,6 +90,10 @@ pub struct Broker {
     topic_configs: DashMap<String, TopicConfig>,
     /// Committed offsets: (group_id, topic, partition) -> offset.
     offsets: DashMap<(String, String, i32), i64>,
+    producer_seq: DashMap<(String, i32, i64), i32>,
+    producer_last_offset: DashMap<(String, i32, i64), i64>,
+    transactions: DashMap<String, Vec<TxnBufferRecord>>,
+    tx_producer: DashMap<String, i64>,
     leader_id: RwLock<Option<i32>>,
     term: RwLock<i64>,
 }
@@ -80,6 +109,10 @@ impl Broker {
             replicas: DashMap::new(),
             topic_configs: DashMap::new(),
             offsets: DashMap::new(),
+            producer_seq: DashMap::new(),
+            producer_last_offset: DashMap::new(),
+            transactions: DashMap::new(),
+            tx_producer: DashMap::new(),
             leader_id: RwLock::new(Some(node_id)),
             term: RwLock::new(0),
         };
@@ -155,6 +188,7 @@ impl Broker {
                 Some(TopicConfig {
                     num_partitions: max_partition + 1,
                     replication_factor: rf,
+                    ..TopicConfig::default()
                 }),
             )?;
         }
@@ -188,6 +222,9 @@ impl Broker {
         let log_config = PartitionLogConfig {
             data_dir: self.config.data_dir.clone(),
             max_segment_size_bytes: 1024 * 1024 * 1024,
+            retention_ms: config.retention_ms,
+            retention_bytes: config.retention_bytes,
+            compact: matches!(config.cleanup_policy, CleanupPolicy::Compact),
         };
         let mut logs = Vec::with_capacity(config.num_partitions as usize);
         for p in 0..config.num_partitions {
@@ -258,6 +295,23 @@ impl Broker {
                 ))
             })?;
 
+        let isr = self.in_sync_replicas(topic, partition_id)?;
+        let min_isr = self
+            .topic_configs
+            .get(topic)
+            .map(|c| c.min_insync_replicas)
+            .unwrap_or(1)
+            .max(1) as usize;
+        if isr.len() < min_isr {
+            return Err(ThorstreamError::Cluster(format!(
+                "insufficient ISR for topic={}, partition={}, isr={}, min_isr={}",
+                topic,
+                partition_id,
+                isr.len(),
+                min_isr
+            )));
+        }
+
         let mut offset: Option<i64> = None;
         for replica_log in replicas.iter() {
             let assigned = replica_log.append(record.clone())?;
@@ -274,6 +328,100 @@ impl Broker {
         }
 
         Ok((partition_id, offset.unwrap_or(0)))
+    }
+
+    pub fn begin_transaction(&self, transaction_id: impl Into<String>, producer_id: i64) {
+        let tx = transaction_id.into();
+        self.transactions.entry(tx.clone()).or_default();
+        self.tx_producer.insert(tx, producer_id);
+    }
+
+    pub fn produce_transactional(
+        &self,
+        transaction_id: &str,
+        topic: impl AsRef<str>,
+        partition: Option<i32>,
+        record: Record,
+    ) -> Result<()> {
+        if !self.transactions.contains_key(transaction_id) {
+            return Err(ThorstreamError::Protocol(format!(
+                "transaction {} not started",
+                transaction_id
+            )));
+        }
+        if let Some(mut rows) = self.transactions.get_mut(transaction_id) {
+            rows.push(TxnBufferRecord {
+                topic: topic.as_ref().to_string(),
+                partition,
+                record,
+            });
+        }
+        Ok(())
+    }
+
+    pub fn commit_transaction(&self, transaction_id: &str) -> Result<Vec<(String, i32, i64)>> {
+        let rows = self
+            .transactions
+            .remove(transaction_id)
+            .map(|(_, v)| v)
+            .unwrap_or_default();
+        self.tx_producer.remove(transaction_id);
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let topic = row.topic.clone();
+            let (partition, offset) = self.produce(&topic, row.partition, row.record)?;
+            out.push((topic, partition, offset));
+        }
+        Ok(out)
+    }
+
+    pub fn abort_transaction(&self, transaction_id: &str) {
+        self.transactions.remove(transaction_id);
+        self.tx_producer.remove(transaction_id);
+    }
+
+    pub fn produce_idempotent(
+        &self,
+        topic: impl AsRef<str>,
+        partition: Option<i32>,
+        mut record: Record,
+        producer_id: i64,
+        sequence: i32,
+    ) -> Result<(i32, i64)> {
+        let topic_name = topic.as_ref().to_string();
+        self.ensure_topic(&topic_name)?;
+        let logs = self.topics.get(&topic_name).unwrap();
+        let partition_id = partition
+            .filter(|&p| p >= 0 && (p as usize) < logs.len())
+            .unwrap_or(0);
+        let key = (topic_name.clone(), partition_id, producer_id);
+
+        if let Some(last_seq) = self.producer_seq.get(&key) {
+            if sequence < *last_seq {
+                return Err(ThorstreamError::Protocol(format!(
+                    "out of order sequence: got {} expected >= {}",
+                    sequence, *last_seq
+                )));
+            }
+            if sequence == *last_seq {
+                let off = self.producer_last_offset.get(&key).map(|v| *v).unwrap_or(0);
+                return Ok((partition_id, off));
+            }
+            if sequence != *last_seq + 1 {
+                return Err(ThorstreamError::Protocol(format!(
+                    "sequence gap: got {} expected {}",
+                    sequence,
+                    *last_seq + 1
+                )));
+            }
+        }
+
+        record.producer_id = Some(producer_id);
+        record.sequence = Some(sequence);
+        let (p, off) = self.produce(&topic_name, Some(partition_id), record)?;
+        self.producer_seq.insert(key.clone(), sequence);
+        self.producer_last_offset.insert(key, off);
+        Ok((p, off))
     }
 
     /// Fetch: read from topic/partition from start_offset, up to max_bytes and max_records.
@@ -295,8 +443,11 @@ impl Broker {
 
     /// Get high water mark for a partition (next offset to be assigned).
     pub fn high_water_mark(&self, topic: &str, partition: i32) -> Result<i64> {
-        let log = self.partition_log(topic, partition)?;
-        Ok(log.high_water_mark())
+        let isr = self.in_sync_replicas(topic, partition)?;
+        if isr.is_empty() {
+            return Ok(0);
+        }
+        Ok(*isr.iter().min().unwrap_or(&0))
     }
 
     /// Get start offset (0 for our implementation).
@@ -337,6 +488,65 @@ impl Broker {
                 partition,
             })?;
         Ok(replicas.iter().map(|log| log.high_water_mark()).collect())
+    }
+
+    pub fn in_sync_replicas(&self, topic: &str, partition: i32) -> Result<Vec<i64>> {
+        let replica_hwms = self.replica_high_water_marks(topic, partition)?;
+        if replica_hwms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let leader_hwm = replica_hwms[0];
+        Ok(replica_hwms
+            .into_iter()
+            .filter(|hwm| *hwm >= leader_hwm)
+            .collect())
+    }
+
+    pub fn under_replicated_partitions(&self) -> usize {
+        self.topics
+            .iter()
+            .map(|entry| {
+                let topic = entry.key().clone();
+                let cfg = self
+                    .topic_configs
+                    .get(&topic)
+                    .map(|c| c.replication_factor)
+                    .unwrap_or(1)
+                    .max(1) as usize;
+                let mut urp = 0usize;
+                for partition in 0..entry.value().len() as i32 {
+                    let isr = self.in_sync_replicas(&topic, partition).unwrap_or_default();
+                    if isr.len() < cfg {
+                        urp += 1;
+                    }
+                }
+                urp
+            })
+            .sum()
+    }
+
+    pub fn partition_sizes(&self) -> Vec<(String, i32, u64)> {
+        let mut out = Vec::new();
+        for entry in self.topics.iter() {
+            let topic = entry.key().clone();
+            for (partition, log) in entry.value().iter().enumerate() {
+                let size = log.size_bytes().unwrap_or(0);
+                out.push((topic.clone(), partition as i32, size));
+            }
+        }
+        out
+    }
+
+    pub fn consumer_lag_metrics(&self) -> Vec<(String, String, i32, i64)> {
+        let mut out = Vec::new();
+        for item in self.offsets.iter() {
+            let (group, topic, partition) = item.key();
+            let committed = *item.value();
+            let hw = self.high_water_mark(topic, *partition).unwrap_or(0);
+            let lag = (hw - committed).max(0);
+            out.push((group.clone(), topic.clone(), *partition, lag));
+        }
+        out
     }
 
     pub fn cluster_status(&self) -> ClusterStatus {

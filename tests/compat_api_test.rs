@@ -11,7 +11,7 @@ async fn schema_registry_and_connect_surface() {
     let base = format!("http://{}", addr);
 
     let server = tokio::spawn(async move {
-        thorstream::compat::run_compat_api_on_listener(listener)
+        thorstream::compat::run_compat_api_on_listener(listener, None)
             .await
             .unwrap();
     });

@@ -123,6 +123,7 @@ fn replication_writes_all_replicas_consistently() {
             Some(TopicConfig {
                 num_partitions: 1,
                 replication_factor: 3,
+                ..Default::default()
             }),
         )
         .unwrap();

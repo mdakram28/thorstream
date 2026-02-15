@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thorstream
+  labels:
+    app: thorstream
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: thorstream
+  template:
+    metadata:
+      labels:
+        app: thorstream
+    spec:
+      containers:
+        - name: thorstream
+          image: ghcr.io/example/thorstream:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: custom
+              containerPort: 9092
+            - name: kafka
+              containerPort: 9093
+            - name: compat
+              containerPort: 8083
+          env:
+            - name: THORSTREAM_ADDR
+              value: 0.0.0.0:9092
+            - name: THORSTREAM_KAFKA_ADDR
+              value: 0.0.0.0:9093
+            - name: THORSTREAM_COMPAT_API_ADDR
+              value: 0.0.0.0:8083
+            - name: THORSTREAM_OBJECT_STORE_DIR
+              value: /var/thorstream-object-store
+            - name: THORSTREAM_OBJECT_STORE_REQUIRED
+              value: "true"
+            - name: THORSTREAM_AUDIT_LOG_PATH
+              value: /var/log/thorstream/audit.log
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          volumeMounts:
+            - name: state
+              mountPath: /data
+            - name: object-store
+              mountPath: /var/thorstream-object-store
+            - name: logs
+              mountPath: /var/log/thorstream
+      volumes:
+        - name: state
+          emptyDir: {}
+        - name: object-store
+          persistentVolumeClaim:
+            claimName: thorstream-object-store-pvc
+        - name: logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thorstream
+spec:
+  selector:
+    app: thorstream
+  ports:
+    - name: custom
+      port: 9092
+      targetPort: 9092
+    - name: kafka
+      port: 9093
+      targetPort: 9093
+    - name: compat
+      port: 8083
+      targetPort: 8083
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: thorstream-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: thorstream

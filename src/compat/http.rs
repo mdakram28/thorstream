@@ -1,4 +1,6 @@
+use crate::broker::Broker;
 use crate::error::{Result, ThorstreamError};
+use crate::observability::observability;
 use axum::extract::{Path, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -12,6 +14,7 @@ use tokio::sync::RwLock;
 #[derive(Clone)]
 struct AppState {
     inner: Arc<RwLock<CompatState>>,
+    broker: Option<Arc<Broker>>,
 }
 
 #[derive(Default)]
@@ -92,16 +95,24 @@ struct SchemaVersionResponse {
 }
 
 pub async fn run_compat_api(addr: &str) -> Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    run_compat_api_on_listener(listener).await
+    run_compat_api_with_broker(addr, None).await
 }
 
-pub async fn run_compat_api_on_listener(listener: TcpListener) -> Result<()> {
+pub async fn run_compat_api_with_broker(addr: &str, broker: Option<Arc<Broker>>) -> Result<()> {
+    let listener = TcpListener::bind(addr).await?;
+    run_compat_api_on_listener(listener, broker).await
+}
+
+pub async fn run_compat_api_on_listener(
+    listener: TcpListener,
+    broker: Option<Arc<Broker>>,
+) -> Result<()> {
     let state = AppState {
         inner: Arc::new(RwLock::new(CompatState {
             global_compatibility: "BACKWARD".to_string(),
             ..CompatState::default()
         })),
+        broker,
     };
 
     let app = Router::new()
@@ -124,6 +135,7 @@ pub async fn run_compat_api_on_listener(listener: TcpListener) -> Result<()> {
             get(get_subject_version),
         )
         .route("/schemas/ids/:id", get(get_schema_by_id))
+        .route("/metrics", get(metrics))
         .route("/config", get(get_global_config).put(set_global_config))
         .route(
             "/config/:subject",
@@ -138,6 +150,10 @@ pub async fn run_compat_api_on_listener(listener: TcpListener) -> Result<()> {
     axum::serve(listener, app)
         .await
         .map_err(|e| ThorstreamError::Protocol(e.to_string()))
+}
+
+async fn metrics(State(state): State<AppState>) -> String {
+    observability().render_prometheus(state.broker.as_deref())
 }
 
 async fn list_connector_plugins() -> Json<Vec<ConnectorPlugin>> {

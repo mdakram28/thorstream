@@ -58,4 +58,54 @@ impl Producer {
         }
         Ok(results)
     }
+
+    pub fn send_idempotent(
+        &self,
+        topic: impl AsRef<str>,
+        record: Record,
+        partition: Option<i32>,
+        producer_id: i64,
+        sequence: i32,
+    ) -> Result<ProduceResult> {
+        let topic = topic.as_ref().to_string();
+        let (partition_id, offset) =
+            self.broker
+                .produce_idempotent(&topic, partition, record, producer_id, sequence)?;
+        Ok(ProduceResult {
+            topic,
+            partition: partition_id,
+            offset,
+        })
+    }
+
+    pub fn begin_transaction(&self, transaction_id: impl Into<String>, producer_id: i64) {
+        self.broker.begin_transaction(transaction_id, producer_id);
+    }
+
+    pub fn send_transactional(
+        &self,
+        transaction_id: &str,
+        topic: impl AsRef<str>,
+        record: Record,
+        partition: Option<i32>,
+    ) -> Result<()> {
+        self.broker
+            .produce_transactional(transaction_id, topic, partition, record)
+    }
+
+    pub fn commit_transaction(&self, transaction_id: &str) -> Result<Vec<ProduceResult>> {
+        let rows = self.broker.commit_transaction(transaction_id)?;
+        Ok(rows
+            .into_iter()
+            .map(|(topic, partition, offset)| ProduceResult {
+                topic,
+                partition,
+                offset,
+            })
+            .collect())
+    }
+
+    pub fn abort_transaction(&self, transaction_id: &str) {
+        self.broker.abort_transaction(transaction_id)
+    }
 }

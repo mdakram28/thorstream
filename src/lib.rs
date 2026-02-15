@@ -5,6 +5,7 @@ pub mod cluster;
 pub mod compat;
 pub mod consumer;
 pub mod error;
+pub mod observability;
 pub mod producer;
 pub mod protocol;
 pub mod security;
@@ -13,7 +14,7 @@ pub mod storage;
 pub mod streams_shim;
 pub mod types;
 
-pub use broker::{Broker, BrokerConfig, TopicConfig};
+pub use broker::{Broker, BrokerConfig, CleanupPolicy, TopicConfig};
 pub use consumer::{Consumer, TopicPartition};
 pub use error::{Result, ThorstreamError};
 pub use producer::{ProduceResult, Producer};

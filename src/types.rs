@@ -15,6 +15,15 @@ pub struct Record {
     pub headers: Vec<RecordHeader>,
     /// Timestamp (millis since epoch); set by broker if None.
     pub timestamp: Option<i64>,
+    /// Producer id for idempotent / transactional producers.
+    #[serde(default)]
+    pub producer_id: Option<i64>,
+    /// Monotonic producer sequence number (per partition).
+    #[serde(default)]
+    pub sequence: Option<i32>,
+    /// Transaction identifier if record belongs to an open transaction.
+    #[serde(default)]
+    pub transaction_id: Option<String>,
 }
 
 /// Kafka-style record header.
@@ -31,6 +40,9 @@ impl Record {
             value,
             headers: Vec::new(),
             timestamp: None,
+            producer_id: None,
+            sequence: None,
+            transaction_id: None,
         }
     }
 
@@ -41,6 +53,17 @@ impl Record {
 
     pub fn with_headers(mut self, headers: Vec<RecordHeader>) -> Self {
         self.headers = headers;
+        self
+    }
+
+    pub fn with_producer(mut self, producer_id: i64, sequence: i32) -> Self {
+        self.producer_id = Some(producer_id);
+        self.sequence = Some(sequence);
+        self
+    }
+
+    pub fn with_transaction(mut self, transaction_id: impl Into<String>) -> Self {
+        self.transaction_id = Some(transaction_id.into());
         self
     }
 

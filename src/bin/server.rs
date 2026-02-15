@@ -24,9 +24,19 @@ fn parse_peers() -> std::collections::HashMap<i32, String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("thorstream=info".parse()?))
-        .init();
+    let filter = EnvFilter::from_default_env().add_directive("thorstream=info".parse()?);
+    if std::env::var("THORSTREAM_LOG_FORMAT")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+    {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init();
+    } else {
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
 
     let config = BrokerConfig {
         node_id: std::env::var("THORSTREAM_NODE_ID")
@@ -55,8 +65,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Ok(compat_addr) = std::env::var("THORSTREAM_COMPAT_API_ADDR") {
+        let compat_broker = Arc::clone(&broker);
         tokio::spawn(async move {
-            let _ = compat::run_compat_api(&compat_addr).await;
+            let _ = compat::run_compat_api_with_broker(&compat_addr, Some(compat_broker)).await;
         });
     }
 

@@ -7,9 +7,11 @@ use crate::protocol::{
     decode_request, encode_response, FetchResponse, MetadataResponse, PartitionMetadata,
     ProduceResponse, Request, Response, TopicMetadata,
 };
+use crate::observability::observability;
 use crate::security::{default_principal, security, AclOperation, AclResourceType};
 use bytes::BytesMut;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::error;
@@ -54,7 +56,11 @@ async fn handle_connection(broker: Arc<Broker>, mut stream: TcpStream) -> Result
             break;
         }
         while let Some(req) = decode_request(&mut read_buf)? {
+            let span = tracing::info_span!("thorstream.request", transport = "custom");
+            let _entered = span.enter();
+            let started = Instant::now();
             let resp = dispatch(&broker, req).await;
+            observability().record_request(started.elapsed(), !matches!(resp, Response::Error(_)));
             let mut write_buf = BytesMut::new();
             encode_response(&resp, &mut write_buf)?;
             stream.write_all(&write_buf).await?;
@@ -230,14 +236,17 @@ fn handle_produce(
         });
     }
 
+    let mut total_bytes = 0usize;
     let mut base_offset = 0i64;
     let mut partition_id = 0i32;
     for record in records {
+        total_bytes += record.value.len() + record.key.as_ref().map(|k| k.len()).unwrap_or(0);
         let (p, offset) = broker.produce(&topic, partition, record.clone())?;
         cluster::replicate_to_quorum(broker, &topic, p, offset, &record)?;
         partition_id = p;
         base_offset = offset;
     }
+    observability().record_produce(1, total_bytes);
     Ok(ProduceResponse {
         topic,
         partition: partition_id,
@@ -254,6 +263,11 @@ fn handle_fetch(
     max_records: usize,
 ) -> Result<FetchResponse> {
     let records = broker.fetch(topic, partition, offset, max_bytes, max_records)?;
+    let total_bytes = records
+        .iter()
+        .map(|r| r.record.value.len() + r.record.key.as_ref().map(|k| k.len()).unwrap_or(0))
+        .sum::<usize>();
+    observability().record_fetch(records.len(), total_bytes);
     let high_water_mark = broker.high_water_mark(topic, partition)?;
     Ok(FetchResponse {
         topic: topic.to_string(),

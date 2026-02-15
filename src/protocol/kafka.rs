@@ -7,6 +7,7 @@
 use crate::broker::Broker;
 use crate::cluster;
 use crate::error::{Result, ThorstreamError};
+use crate::observability::observability;
 use crate::security::{default_principal, security, AclOperation, AclResourceType};
 use crate::types::Record;
 use bytes::{Buf, BufMut, BytesMut};
@@ -129,6 +130,9 @@ fn parse_record(payload: &mut &[u8]) -> Result<Record> {
         value,
         headers: Vec::new(),
         timestamp: None,
+        producer_id: None,
+        sequence: None,
+        transaction_id: None,
     })
 }
 
@@ -626,6 +630,8 @@ fn read_produce_request_and_apply(
     let mut last_topic = String::new();
     let mut last_partition = 0i32;
     let mut last_offset = 0i64;
+    let mut total_records = 0usize;
+    let mut total_bytes = 0usize;
     let mut ok = true;
     for _ in 0..topic_count {
         let topic = read_string(body)?.unwrap_or_default();
@@ -650,6 +656,8 @@ fn read_produce_request_and_apply(
             match parse_record_batch(&buf) {
                 Ok((_, records)) => {
                     for (i, rec) in records.into_iter().enumerate() {
+                        total_records += 1;
+                        total_bytes += rec.value.len() + rec.key.as_ref().map(|k| k.len()).unwrap_or(0);
                         match broker.produce(&topic, Some(partition), rec.clone()) {
                             Ok((p, offset)) => {
                                 if cluster::replicate_to_quorum(broker, &topic, p, offset, &rec)
@@ -668,6 +676,9 @@ fn read_produce_request_and_apply(
                 Err(_) => ok = false,
             }
         }
+    }
+    if total_records > 0 {
+        observability().record_produce(total_records, total_bytes);
     }
     Ok((last_topic, last_partition, last_offset, ok))
 }
@@ -718,6 +729,11 @@ fn read_fetch_request_and_apply(
     }
     let stored = broker.fetch(&topic, partition, fetch_offset, max_bytes, 500)?;
     let high = broker.high_water_mark(&topic, partition)?;
+    let total_bytes = stored
+        .iter()
+        .map(|r| r.record.value.len() + r.record.key.as_ref().map(|k| k.len()).unwrap_or(0))
+        .sum::<usize>();
+    observability().record_fetch(stored.len(), total_bytes);
     let pairs: Vec<(i64, Record)> = stored.into_iter().map(|s| (s.offset, s.record)).collect();
     Ok((topic, partition, pairs, high))
 }

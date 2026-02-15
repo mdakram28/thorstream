@@ -179,4 +179,39 @@ impl Segment {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    pub fn file_size_bytes(&self) -> Result<u64> {
+        let file = self.file.read();
+        Ok(file.metadata()?.len())
+    }
+
+    pub fn read_all(&self) -> Result<Vec<(i64, Record)>> {
+        self.read_range(self.base_offset, usize::MAX, usize::MAX)
+            .map(|(records, _)| records)
+    }
+
+    pub fn rewrite_all(&self, records: &[(i64, Record)]) -> Result<()> {
+        let mut file = self.file.write();
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+
+        let mut bytes_written: i64 = 0;
+        let mut next = self.base_offset;
+        for (_, record) in records {
+            let bytes = bincode::serialize(record)
+                .map_err(|e| ThorstreamError::Serialization(e.to_string()))?;
+            if bytes.len() > MAX_RECORD_SIZE {
+                return Err(ThorstreamError::Storage("Record too large".into()));
+            }
+            let len = bytes.len() as u32;
+            file.write_all(&len.to_be_bytes())?;
+            file.write_all(&bytes)?;
+            bytes_written += LENGTH_PREFIX_BYTES as i64 + bytes.len() as i64;
+            next += 1;
+        }
+        file.flush()?;
+        self.write_position.store(bytes_written, Ordering::SeqCst);
+        self.next_offset.store(next, Ordering::SeqCst);
+        Ok(())
+    }
 }

@@ -2,6 +2,7 @@
 
 use crate::broker::Broker;
 use crate::error::Result;
+use crate::observability::observability;
 use crate::protocol::{
     build_minimal_error_response, decode_kafka_request, handle_kafka_request, kafka_frame_response,
 };
@@ -9,6 +10,7 @@ use crate::security::{default_principal, security, AclOperation, AclResourceType
 use bytes::BytesMut;
 use std::io::Cursor;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{error, info};
@@ -56,6 +58,9 @@ async fn handle_kafka_connection(broker: Arc<Broker>, mut stream: TcpStream) -> 
         while let Some((api_key, version, correlation_id, body)) =
             decode_kafka_request(&mut read_buf)?
         {
+            let span = tracing::info_span!("thorstream.request", transport = "kafka", api_key, version);
+            let _entered = span.enter();
+            let started = Instant::now();
             let _ = security().authorize_and_audit(
                 &default_principal(),
                 AclOperation::Describe,
@@ -78,6 +83,7 @@ async fn handle_kafka_connection(broker: Arc<Broker>, mut stream: TcpStream) -> 
                     build_minimal_error_response(api_key, version, correlation_id)
                 }
             };
+            observability().record_request(started.elapsed(), true);
             let framed = kafka_frame_response(resp);
             info!(api_key, len = framed.len(), "kafka response");
             stream.write_all(&framed).await?;

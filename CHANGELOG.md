@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 - Kafka Connect-compatible HTTP API surface (`/connectors`, `/connector-plugins`, status/pause/resume).
 - Schema Registry-compatible HTTP API surface (`/subjects`, `/schemas/ids`, config and compatibility endpoints).
 - Embedded Streams shim module (`streams_shim`) for stateless filter/map/to pipelines.
+- Object-store-backed segment mirroring and startup restore path.
+- Kubernetes-first deployment manifests (Deployment, Service, PDB, HPA).
+- Kubernetes operations guide for near-stateless autoscaled brokers.
+- Advanced log semantics: retention (time/size), compaction, idempotent producer sequencing, transactional EOS scaffolding, and ISR/HW consistency behavior.
 
 ### Changed
 - Leader-aware produce path for custom protocol and Kafka protocol handlers.

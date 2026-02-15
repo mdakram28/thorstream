@@ -1,8 +1,10 @@
 //! Partition log: append-only log over one or more segments.
 
+use super::object_store;
 use super::Segment;
 use crate::error::{Result, ThorstreamError};
 use crate::types::Record;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Config for partition log (segment rollover, etc.).
@@ -12,6 +14,12 @@ pub struct PartitionLogConfig {
     pub max_segment_size_bytes: u64,
     /// Data directory for segment files.
     pub data_dir: std::path::PathBuf,
+    /// Retention time in milliseconds (delete policy).
+    pub retention_ms: Option<u64>,
+    /// Retention size in bytes (delete policy).
+    pub retention_bytes: Option<u64>,
+    /// Enable log compaction by key.
+    pub compact: bool,
 }
 
 impl Default for PartitionLogConfig {
@@ -19,6 +27,9 @@ impl Default for PartitionLogConfig {
         Self {
             max_segment_size_bytes: 1024 * 1024 * 1024, // 1GB
             data_dir: std::path::PathBuf::from("data"),
+            retention_ms: None,
+            retention_bytes: None,
+            compact: false,
         }
     }
 }
@@ -44,6 +55,7 @@ impl PartitionLog {
         let topic = topic.into();
         let segment_dir = config.data_dir.join(&topic).join(partition.to_string());
         let segment_path = segment_dir.join("00000000000000000000.log");
+        object_store::restore_segment_if_needed(&topic, partition, &segment_path)?;
         let segment = Segment::open(segment_path, 0)?;
         let segment = Arc::new(segment);
         let base = segment.base_offset();
@@ -62,7 +74,10 @@ impl PartitionLog {
     pub fn append(&self, mut record: Record) -> Result<i64> {
         record.ensure_timestamp();
         let seg = self.active_segment.read();
-        seg.append(&record)
+        let offset = seg.append(&record)?;
+        object_store::mirror_append(&self.topic, self.partition, &record)?;
+        self.apply_retention_and_compaction()?;
+        Ok(offset)
     }
 
     /// Read a single record at offset.
@@ -112,5 +127,63 @@ impl PartitionLog {
 
     pub fn topic(&self) -> &str {
         &self.topic
+    }
+
+    pub fn size_bytes(&self) -> Result<u64> {
+        self.active_segment.read().file_size_bytes()
+    }
+
+    fn apply_retention_and_compaction(&self) -> Result<()> {
+        let seg = self.active_segment.read();
+        let mut rows = seg.read_all()?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(ms) = self.config.retention_ms {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let min_ts = now - ms as i64;
+            rows.retain(|(_, record)| record.timestamp.unwrap_or(now) >= min_ts);
+        }
+
+        if let Some(max_bytes) = self.config.retention_bytes {
+            while seg.file_size_bytes()? > max_bytes && rows.len() > 1 {
+                rows.remove(0);
+                seg.rewrite_all(&rows)?;
+            }
+        }
+
+        if self.config.compact {
+            let mut latest_by_key: HashMap<Vec<u8>, usize> = HashMap::new();
+            for (idx, (_, record)) in rows.iter().enumerate() {
+                if let Some(key) = &record.key {
+                    latest_by_key.insert(key.clone(), idx);
+                }
+            }
+            let compacted: Vec<(i64, Record)> = rows
+                .into_iter()
+                .enumerate()
+                .filter_map(|(idx, row)| {
+                    let keep = if let Some(key) = &row.1.key {
+                        latest_by_key.get(key).copied() == Some(idx)
+                    } else {
+                        true
+                    };
+                    if keep {
+                        Some(row)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            seg.rewrite_all(&compacted)?;
+            return Ok(());
+        }
+
+        seg.rewrite_all(&rows)?;
+        Ok(())
     }
 }
