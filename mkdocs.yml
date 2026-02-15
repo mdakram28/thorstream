@@ -1,0 +1,34 @@
+site_name: Thorstream Docs
+site_description: Thorstream streaming platform documentation
+site_url: https://example.com/thorstream
+repo_name: thorstream
+repo_url: https://example.com/thorstream
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+  - fenced_code
+  - attr_list
+
+nav:
+  - Home: index.md
+  - Docs Index: DOCS_INDEX.md
+  - Architecture: ARCHITECTURE.md
+  - Operations: OPERATIONS.md
+  - Deployment TLS: DEPLOYMENT_TLS.md
+  - Kubernetes: KUBERNETES.md
+  - Security: SECURITY_ENTERPRISE.md
+  - Release Checklist: RELEASE_CHECKLIST.md
+  - UI Guide: UI.md

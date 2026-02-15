@@ -1,6 +1,6 @@
 # Thorstream Architecture
 
-Related docs: [Operations](OPERATIONS.md) · [Deployment TLS](DEPLOYMENT_TLS.md) · [Kubernetes](KUBERNETES.md) · [Security](SECURITY_ENTERPRISE.md) · [Docs Index](README.md)
+Related docs: [Operations](OPERATIONS.md) · [Deployment TLS](DEPLOYMENT_TLS.md) · [Kubernetes](KUBERNETES.md) · [Security](SECURITY_ENTERPRISE.md) · [Docs Index](index.md)
 
 ## High-level components
 - `broker`: topic/partition ownership, produce/fetch routing, offsets.

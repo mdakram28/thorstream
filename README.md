@@ -167,7 +167,8 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 
 ## Documentation
 
-- Documentation index: [docs/README.md](docs/README.md)
+- Documentation home: [docs/index.md](docs/index.md)
+- Documentation index map: [docs/DOCS_INDEX.md](docs/DOCS_INDEX.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Deployment (TLS + reverse proxy): [docs/DEPLOYMENT_TLS.md](docs/DEPLOYMENT_TLS.md)
@@ -175,6 +176,25 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 - Security (SASL/ACL/RBAC/audit): [docs/SECURITY_ENTERPRISE.md](docs/SECURITY_ENTERPRISE.md)
 - Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
 - UI guide: [ui/README.md](ui/README.md)
+
+### MkDocs Material site
+
+A full documentation website is included via MkDocs Material.
+
+Run locally:
+
+```bash
+/home/akram/workspace/thorstream/.venv/bin/python -m pip install -r docs/requirements-mkdocs.txt
+/home/akram/workspace/thorstream/.venv/bin/python -m mkdocs serve
+```
+
+Build static site:
+
+```bash
+/home/akram/workspace/thorstream/.venv/bin/python -m mkdocs build
+```
+
+Configuration is in [mkdocs.yml](mkdocs.yml) and source pages are in [docs/index.md](docs/index.md).
 
 ## Observability & Ops
 

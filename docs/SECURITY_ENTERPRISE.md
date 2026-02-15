@@ -1,6 +1,6 @@
 # Enterprise Security
 
-Related docs: [Deployment TLS](DEPLOYMENT_TLS.md) · [Operations](OPERATIONS.md) · [Release Checklist](RELEASE_CHECKLIST.md) · [Docs Index](README.md)
+Related docs: [Deployment TLS](DEPLOYMENT_TLS.md) · [Operations](OPERATIONS.md) · [Release Checklist](RELEASE_CHECKLIST.md) · [Docs Index](index.md)
 
 Thorstream includes enterprise security foundations for authentication, authorization, and auditing.
 
