@@ -1,4 +1,5 @@
-<p align="center"><img src="documentation/assets/logo.svg" width="400px"></p>
+
+![Thorstream Logo](documentation/assets/logo.svg)
 
 # Thorstream
 
