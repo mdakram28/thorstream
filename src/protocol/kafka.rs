@@ -7,6 +7,7 @@
 use crate::broker::Broker;
 use crate::cluster;
 use crate::error::{Result, ThorstreamError};
+use crate::security::{default_principal, security, AclOperation, AclResourceType};
 use crate::types::Record;
 use bytes::{Buf, BufMut, BytesMut};
 use std::io::Cursor;
@@ -294,6 +295,7 @@ pub fn handle_kafka_request(
     mut body: Cursor<Vec<u8>>,
 ) -> Result<BytesMut> {
     let mut dst = BytesMut::new();
+    let principal = default_principal();
     match api_key {
         API_API_VERSIONS => {
             write_response_header(&mut dst, correlation_id);
@@ -330,6 +332,12 @@ pub fn handle_kafka_request(
             }
         }
         API_METADATA => {
+            security().authorize_and_audit(
+                &principal,
+                AclOperation::Describe,
+                AclResourceType::Cluster,
+                "cluster",
+            )?;
             let requested_topics = read_metadata_request(&mut body, version)?;
             // If no topics requested (or null), return all topics
             let topics: Vec<String> = if requested_topics.is_empty() {
@@ -475,6 +483,7 @@ pub fn handle_kafka_request(
             }
         }
         API_PRODUCE => {
+            // topic-level ACL checks are enforced while parsing partitions.
             let (topic, partition, base_offset, ok) =
                 read_produce_request_and_apply(broker, &mut body, version)?;
             write_response_header(&mut dst, correlation_id);
@@ -496,6 +505,7 @@ pub fn handle_kafka_request(
             }
         }
         API_FETCH => {
+            // topic-level ACL checks are enforced while parsing partitions.
             let (topic, partition, records, high_water_mark) =
                 read_fetch_request_and_apply(broker, &mut body, version)?;
             write_response_header(&mut dst, correlation_id);
@@ -537,6 +547,12 @@ pub fn handle_kafka_request(
             let mut timestamp = 0i64;
             if topic_count > 0 {
                 topic_name = read_string(&mut body)?.unwrap_or_default();
+                security().authorize_and_audit(
+                    &principal,
+                    AclOperation::Read,
+                    AclResourceType::Topic,
+                    &topic_name,
+                )?;
                 let partition_count = body.get_i32();
                 if partition_count > 0 {
                     partition_id = body.get_i32();
@@ -613,6 +629,12 @@ fn read_produce_request_and_apply(
     let mut ok = true;
     for _ in 0..topic_count {
         let topic = read_string(body)?.unwrap_or_default();
+        security().authorize_and_audit(
+            &default_principal(),
+            AclOperation::Write,
+            AclResourceType::Topic,
+            &topic,
+        )?;
         last_topic = topic.clone();
         let _ = broker.ensure_topic(&topic);
         let partition_count = body.get_i32();
@@ -673,6 +695,12 @@ fn read_fetch_request_and_apply(
         return Err(ThorstreamError::Protocol("fetch: no topics".into()));
     }
     let topic = read_string(body)?.unwrap_or_default();
+    security().authorize_and_audit(
+        &default_principal(),
+        AclOperation::Read,
+        AclResourceType::Topic,
+        &topic,
+    )?;
     let partition_count = body.get_i32();
     if partition_count <= 0 {
         return Err(ThorstreamError::Protocol("fetch: no partitions".into()));

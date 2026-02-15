@@ -7,6 +7,7 @@ use crate::protocol::{
     decode_request, encode_response, FetchResponse, MetadataResponse, PartitionMetadata,
     ProduceResponse, Request, Response, TopicMetadata,
 };
+use crate::security::{default_principal, security, AclOperation, AclResourceType};
 use bytes::BytesMut;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -69,26 +70,47 @@ async fn handle_connection(broker: Arc<Broker>, mut stream: TcpStream) -> Result
 }
 
 async fn dispatch(broker: &Broker, req: Request) -> Response {
+    let principal = default_principal();
     match req {
-        Request::Metadata { topics } => match handle_metadata(broker, topics) {
-            Ok(m) => Response::Metadata(m),
-            Err(e) => Response::Error(e.to_string()),
-        },
+        Request::Metadata { topics } => {
+            if let Err(e) = security().authorize_and_audit(
+                &principal,
+                AclOperation::Describe,
+                AclResourceType::Cluster,
+                "cluster",
+            ) {
+                return Response::Error(e.to_string());
+            }
+            match handle_metadata(broker, topics) {
+                Ok(m) => Response::Metadata(m),
+                Err(e) => Response::Error(e.to_string()),
+            }
+        }
         Request::Produce {
             topic,
             partition,
             records,
-        } => match handle_produce(broker, topic, partition, records) {
-            Ok(r) => Response::Produce(r),
-            Err(crate::error::ThorstreamError::NotLeader {
-                leader_id,
-                leader_addr,
-            }) => Response::NotLeader {
-                leader_id,
-                leader_addr,
-            },
-            Err(e) => Response::Error(e.to_string()),
-        },
+        } => {
+            if let Err(e) = security().authorize_and_audit(
+                &principal,
+                AclOperation::Write,
+                AclResourceType::Topic,
+                &topic,
+            ) {
+                return Response::Error(e.to_string());
+            }
+            match handle_produce(broker, topic, partition, records) {
+                Ok(r) => Response::Produce(r),
+                Err(crate::error::ThorstreamError::NotLeader {
+                    leader_id,
+                    leader_addr,
+                }) => Response::NotLeader {
+                    leader_id,
+                    leader_addr,
+                },
+                Err(e) => Response::Error(e.to_string()),
+            }
+        }
         Request::InternalReplicate {
             topic,
             partition,
@@ -112,27 +134,57 @@ async fn dispatch(broker: &Broker, req: Request) -> Response {
             offset,
             max_bytes,
             max_records,
-        } => match handle_fetch(broker, &topic, partition, offset, max_bytes, max_records) {
-            Ok(r) => Response::Fetch(r),
-            Err(e) => Response::Error(e.to_string()),
-        },
+        } => {
+            if let Err(e) = security().authorize_and_audit(
+                &principal,
+                AclOperation::Read,
+                AclResourceType::Topic,
+                &topic,
+            ) {
+                return Response::Error(e.to_string());
+            }
+            match handle_fetch(broker, &topic, partition, offset, max_bytes, max_records) {
+                Ok(r) => Response::Fetch(r),
+                Err(e) => Response::Error(e.to_string()),
+            }
+        }
         Request::OffsetCommit {
             group_id,
             topic,
             partition,
             offset,
-        } => match broker.offset_commit(&group_id, &topic, partition, offset) {
-            Ok(()) => Response::OffsetCommit,
-            Err(e) => Response::Error(e.to_string()),
-        },
+        } => {
+            if let Err(e) = security().authorize_and_audit(
+                &principal,
+                AclOperation::Alter,
+                AclResourceType::Group,
+                &group_id,
+            ) {
+                return Response::Error(e.to_string());
+            }
+            match broker.offset_commit(&group_id, &topic, partition, offset) {
+                Ok(()) => Response::OffsetCommit,
+                Err(e) => Response::Error(e.to_string()),
+            }
+        }
         Request::OffsetFetch {
             group_id,
             topic,
             partition,
-        } => match broker.offset_fetch(&group_id, &topic, partition) {
-            Ok(off) => Response::OffsetFetch(Some(off)),
-            Err(_) => Response::OffsetFetch(None),
-        },
+        } => {
+            if let Err(e) = security().authorize_and_audit(
+                &principal,
+                AclOperation::Read,
+                AclResourceType::Group,
+                &group_id,
+            ) {
+                return Response::Error(e.to_string());
+            }
+            match broker.offset_fetch(&group_id, &topic, partition) {
+                Ok(off) => Response::OffsetFetch(Some(off)),
+                Err(_) => Response::OffsetFetch(None),
+            }
+        }
     }
 }
 

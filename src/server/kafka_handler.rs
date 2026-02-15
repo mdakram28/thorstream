@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::protocol::{
     build_minimal_error_response, decode_kafka_request, handle_kafka_request, kafka_frame_response,
 };
+use crate::security::{default_principal, security, AclOperation, AclResourceType};
 use bytes::BytesMut;
 use std::io::Cursor;
 use std::sync::Arc;
@@ -55,6 +56,12 @@ async fn handle_kafka_connection(broker: Arc<Broker>, mut stream: TcpStream) -> 
         while let Some((api_key, version, correlation_id, body)) =
             decode_kafka_request(&mut read_buf)?
         {
+            let _ = security().authorize_and_audit(
+                &default_principal(),
+                AclOperation::Describe,
+                AclResourceType::Cluster,
+                "kafka-api",
+            );
             info!(api_key, version, correlation_id, "kafka request");
             let body_in = body.into_inner();
             let body_cursor = Cursor::new(body_in);

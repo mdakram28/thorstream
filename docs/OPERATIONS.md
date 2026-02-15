@@ -6,6 +6,7 @@
 - `THORSTREAM_KAFKA_PORT` (metadata broker port hint)
 - `THORSTREAM_NODE_ID` (cluster node id)
 - `THORSTREAM_CLUSTER_PEERS` format: `1=127.0.0.1:9101,2=127.0.0.1:9102`
+- `THORSTREAM_COMPAT_API_ADDR` (optional Connect + Schema Registry compatibility API, e.g. `127.0.0.1:8083`)
 
 ## Single-node run
 ```bash
@@ -44,3 +45,6 @@ cargo run --bin thorstream
 ## Backup and restore
 - Backup `data/` atomically (filesystem snapshot preferred).
 - Restore by replacing `data/` and restarting nodes.
+
+## Deployment
+- For production reverse-proxy and TLS setup of compatibility APIs, see `docs/DEPLOYMENT_TLS.md`.

@@ -59,6 +59,15 @@ cargo run --bin thorstream
 - `THORSTREAM_KAFKA_ADDR`: Kafka protocol listener (optional)
 - `THORSTREAM_NODE_ID`: integer node id for cluster mode
 - `THORSTREAM_CLUSTER_PEERS`: static peers, format `id=host:port,id=host:port`
+- `THORSTREAM_COMPAT_API_ADDR`: enables HTTP compatibility APIs for Kafka Connect and Schema Registry
+- `THORSTREAM_SASL_PLAIN_USERS`: comma-separated `user:password` pairs
+- `THORSTREAM_SASL_SCRAM_USERS`: comma-separated `user:password` pairs for SCRAM validation
+- `THORSTREAM_SASL_OAUTH_TOKENS`: comma-separated bearer tokens
+- `THORSTREAM_DEFAULT_PRINCIPAL`: default runtime principal if protocol handshake is not present
+- `THORSTREAM_ACL_RULES`: semicolon-separated ACL rules `principal|operation|resource_type|resource_pattern|permission`
+- `THORSTREAM_ACL_DEFAULT_ALLOW`: `true/false` fallback if no ACL match
+- `THORSTREAM_RBAC_BINDINGS`: role bindings, e.g. `alice=admin;bob=viewer`
+- `THORSTREAM_AUDIT_LOG_PATH`: JSONL audit log file path
 
 ## Development
 
@@ -83,10 +92,44 @@ Kafka compatibility tests (Python):
 pytest tests/kafka_client_compat/test_thorstream.py -v
 ```
 
+## Ecosystem compatibility
+
+Thorstream now includes compatibility surfaces for Kafka ecosystem integrations:
+
+- **Kafka Connect API compatibility** (HTTP):
+	- `GET /connector-plugins`
+	- `GET/POST /connectors`
+	- `GET/DELETE /connectors/{name}`
+	- `GET /connectors/{name}/status`
+	- `PUT /connectors/{name}/pause` and `PUT /connectors/{name}/resume`
+	- Built-in plugin descriptors for S3 sink/source, JDBC sink/source, and Debezium Postgres CDC.
+	- Current scope: API/control-plane compatibility surface for connector management and discovery.
+
+- **Schema Registry compatibility** (HTTP):
+	- `GET /subjects`
+	- `GET/POST /subjects/{subject}/versions`
+	- `GET /subjects/{subject}/versions/{version|latest}`
+	- `GET /schemas/ids/{id}`
+	- `GET/PUT /config` and `GET/PUT /config/{subject}`
+	- `POST /compatibility/subjects/{subject}/versions/{version|latest}`
+	- Supports schema type markers for `AVRO`, `PROTOBUF`, and `JSON`.
+
+- **Streams compatibility shim**:
+	- Embedded Rust shim is available via `thorstream::streams_shim` (`StreamsBuilder`, `KStream`, `StreamTask`).
+	- Supports stateless `filter_values`, `map_values`, and sink `to(...)` with `run_once(...)` execution.
+
+Enable API server:
+
+```bash
+THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
+```
+
 ## Documentation
 
 - Architecture: `docs/ARCHITECTURE.md`
 - Operations: `docs/OPERATIONS.md`
+- Deployment (TLS + reverse proxy): `docs/DEPLOYMENT_TLS.md`
+- Security (SASL/ACL/RBAC/audit): `docs/SECURITY_ENTERPRISE.md`
 - Release checklist: `docs/RELEASE_CHECKLIST.md`
 - Security policy: `SECURITY.md`
 - Contribution guide: `CONTRIBUTING.md`

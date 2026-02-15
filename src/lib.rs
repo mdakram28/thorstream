@@ -2,12 +2,15 @@
 
 pub mod broker;
 pub mod cluster;
+pub mod compat;
 pub mod consumer;
 pub mod error;
 pub mod producer;
 pub mod protocol;
+pub mod security;
 pub mod server;
 pub mod storage;
+pub mod streams_shim;
 pub mod types;
 
 pub use broker::{Broker, BrokerConfig, TopicConfig};

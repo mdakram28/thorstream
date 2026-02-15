@@ -4,7 +4,7 @@
 //! Kafka wire protocol server for standard Kafka client compatibility.
 
 use std::sync::Arc;
-use thorstream::{cluster, server, Broker, BrokerConfig};
+use thorstream::{cluster, compat, server, Broker, BrokerConfig};
 use tracing_subscriber::EnvFilter;
 
 fn parse_peers() -> std::collections::HashMap<i32, String> {
@@ -52,6 +52,12 @@ async fn main() -> anyhow::Result<()> {
     if let Ok(kafka_addr) = std::env::var("THORSTREAM_KAFKA_ADDR") {
         let kafka_broker = Arc::clone(&broker);
         tokio::spawn(async move { server::run_kafka_server(kafka_broker, &kafka_addr).await });
+    }
+
+    if let Ok(compat_addr) = std::env::var("THORSTREAM_COMPAT_API_ADDR") {
+        tokio::spawn(async move {
+            let _ = compat::run_compat_api(&compat_addr).await;
+        });
     }
 
     main.await??;

@@ -40,4 +40,7 @@ pub enum ThorstreamError {
 
     #[error("Cluster error: {0}")]
     Cluster(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 }
