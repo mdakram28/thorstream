@@ -1,4 +1,4 @@
-<p align="center"><img src="documentation/assets/logo.svg" width="400px" /></p>
+<p align="center"><img src="https://raw.githubusercontent.com/mdakram28/thorstream/refs/heads/main/documentation/assets/logo.svg" width="400px" /></p>
 
 # Thorstream
 
