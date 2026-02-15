@@ -166,7 +166,7 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 	- Replica consistency checks on append path
 
 ## Documentation
-
+- Website: [https://mdakram.com/thorstream/](https://mdakram.com/thorstream/)
 - Documentation home: [documentation/index.md](documentation/index.md)
 - Documentation index map: [documentation/DOCS_INDEX.md](documentation/DOCS_INDEX.md)
 - Architecture: [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)
