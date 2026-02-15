@@ -95,6 +95,26 @@ Kafka compatibility tests (Python):
 pytest tests/kafka_client_compat/test_thorstream.py -v
 ```
 
+## Web UI
+
+Thorstream now includes a simple UI project at `ui/` for operations visibility and basic API actions.
+
+- Dashboard metrics from `/metrics` (lag, partition size, throughput, under-replicated partitions, p99 latency)
+- Basic Kafka Connect operations (list/create connectors)
+- Basic Schema Registry operations (list subjects/register schema)
+
+Run:
+
+```bash
+cd ui
+npm install
+npm run dev
+```
+
+The UI defaults to Vite proxy `/api -> http://127.0.0.1:8083`.
+
+See `ui/README.md` for full setup and build instructions.
+
 ## Ecosystem compatibility
 
 Thorstream now includes compatibility surfaces for Kafka ecosystem integrations:
@@ -147,11 +167,14 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 
 ## Documentation
 
-- Architecture: `docs/ARCHITECTURE.md`
-- Operations: `docs/OPERATIONS.md`
-- Deployment (TLS + reverse proxy): `docs/DEPLOYMENT_TLS.md`
-- Kubernetes-first deployment: `docs/KUBERNETES.md`
-- Security (SASL/ACL/RBAC/audit): `docs/SECURITY_ENTERPRISE.md`
+- Documentation index: [docs/README.md](docs/README.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Operations: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Deployment (TLS + reverse proxy): [docs/DEPLOYMENT_TLS.md](docs/DEPLOYMENT_TLS.md)
+- Kubernetes-first deployment: [docs/KUBERNETES.md](docs/KUBERNETES.md)
+- Security (SASL/ACL/RBAC/audit): [docs/SECURITY_ENTERPRISE.md](docs/SECURITY_ENTERPRISE.md)
+- Release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- UI guide: [ui/README.md](ui/README.md)
 
 ## Observability & Ops
 
@@ -167,7 +190,6 @@ THORSTREAM_COMPAT_API_ADDR=127.0.0.1:8083 cargo run --bin thorstream
 - OpenTelemetry hooks:
 	- request paths emit `tracing` spans (`thorstream.request`) for custom and Kafka transports
 	- these spans can be forwarded by an OTEL-enabled subscriber/collector pipeline
-- Release checklist: `docs/RELEASE_CHECKLIST.md`
 - Security policy: `SECURITY.md`
 - Contribution guide: `CONTRIBUTING.md`
 

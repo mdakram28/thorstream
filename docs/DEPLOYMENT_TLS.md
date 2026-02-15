@@ -1,5 +1,7 @@
 # Deployment: Compatibility API behind Reverse Proxy + TLS
 
+Related docs: [Operations](OPERATIONS.md) · [Security](SECURITY_ENTERPRISE.md) · [Kubernetes](KUBERNETES.md) · [Docs Index](README.md)
+
 This guide deploys Thorstream with Kafka protocol and compatibility API, while terminating TLS at a reverse proxy.
 
 ## Goal architecture

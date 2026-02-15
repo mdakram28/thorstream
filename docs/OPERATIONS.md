@@ -1,5 +1,7 @@
 # Operations Guide
 
+Related docs: [Architecture](ARCHITECTURE.md) · [Deployment TLS](DEPLOYMENT_TLS.md) · [Kubernetes](KUBERNETES.md) · [Release Checklist](RELEASE_CHECKLIST.md) · [Docs Index](README.md)
+
 ## Environment variables
 - `THORSTREAM_ADDR` (default `0.0.0.0:9092`)
 - `THORSTREAM_KAFKA_ADDR` (optional Kafka wire protocol listener)

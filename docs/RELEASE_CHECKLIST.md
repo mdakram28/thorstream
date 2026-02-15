@@ -1,5 +1,7 @@
 # Release Checklist
 
+Related docs: [Operations](OPERATIONS.md) · [Architecture](ARCHITECTURE.md) · [Security](SECURITY_ENTERPRISE.md) · [Docs Index](README.md)
+
 ## Pre-release
 - [ ] Update `CHANGELOG.md` for the release version.
 - [ ] Verify `README.md` reflects current behavior and limitations.
