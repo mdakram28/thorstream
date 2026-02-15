@@ -1,0 +1,3 @@
+# For running tests with standard Kafka client libraries (Python).
+kafka-python>=2.0.2
+pytest>=7.0
